@@ -133,6 +133,52 @@ jobs:
       - store_artifacts:
           path: ./logs
 
+
+  integration-tests-trino:
+
+    docker:
+      - image: cimg/python:3.9.9
+      - image: trinodb/trino:430
+
+    resource_class: small
+
+    environment:
+      DBT_PROFILES_DIR: ./integration_tests/ci
+      DBT_PROJECT_DIR: ./integration_tests
+      DBT_VERSION: 1.6.*
+
+    steps:
+      - checkout
+      - run:
+          name: Install Ubuntu packages
+          command: |
+            sudo apt-get update
+            sudo apt-get install libsasl2-dev libsasl2-2
+      - run: *pip-install-core
+      - run:
+          name: Install dbt adapter packages
+          command: |
+            python3 -m venv venv
+            . venv/bin/activate
+            pip install "dbt-trino==$DBT_VERSION"
+      - run: *dbt-deps
+      - setup_remote_docker:
+          version: default
+      - run:
+          name: Run Trino server
+          command: |
+            docker run --name trino -p 8080:8080 -d -v ./integration_tests/docker/trino/catalog:/etc/trino/catalog trinodb/trino:430
+            timeout 5m bash -c -- 'while ! docker logs trino 2>&1 | tail -n 1 | grep "SERVER STARTED"; do sleep 2; done'
+
+      - run:
+          name: "Run Tests - Trino"
+          command: |
+            . venv/bin/activate
+            dbt build -t trino --project-dir $DBT_PROJECT_DIR
+
+      - store_artifacts:
+          path: ./logs
+
 workflows:
   version: 2
   test-all:
@@ -143,5 +189,8 @@ workflows:
           requires:
             - hold
       - integration-tests-spark-thrift:
+          requires:
+            - hold
+      - integration-tests-trino:
           requires:
             - hold
